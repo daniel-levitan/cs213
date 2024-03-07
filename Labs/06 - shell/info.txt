@@ -1,0 +1,69 @@
+Processos
+
+    • pid_t getpid(void) retorna o número do processo rodando
+    • pid_t getppid(void) retorna o numero do pai do processo rodando
+      (sys/types.h)
+
+    Um processo é suspenso por meio dos sinais SIGSTOP, SIGTSTP, SIGTTIN ou SIGTTOU
+    Ele volta a rodar com o sinal SIGCONT
+    Toad vez que um processo filho termina, um sinal SIGCHLD é enviado.
+
+    • void exit(int status) termina um processo com status
+      (stdlib.h)
+    • pid_t fork(void) faz com que o processo pai crie um processo filho. Retornar duas vezes.
+      (sys/types.h e unistd.h)
+        Aqui tem uma observação sobre arquivos. Se o processo pai tiver um arquivo aberto, os descritores serão copiados, apontarão para os mesmos lugares. Leituras feitas pelo pai avançarão o ponteiro do filho. 
+
+    • pid_t waitpid(pid_t pid, int *statusp, int options) retorna o pid do filho terminado. Processo pai aguarda um processo filho terminar. 
+        Se pid > 0, espera pelo processo pid.
+        Se pid = -1, espera por qualquer processo filho.
+        Podemos mudar o comportamento de waitpid através do parâmetro options:
+            ⁃ WNOHANG. Retorna imediatamente se não houver filhos terminados.
+            ⁃ WUNTRACED. Suspende o processo chamando até que um filho tenha terminado ou tenha parado.
+            ⁃ WCONTINUED. Suspende o processo chamando até que um processo tenha terminado ou um processo parado tenha sido retomado pela recepção de SIGCONT.
+        Podemos combinar as opções acima.
+
+    • pid_t wait(int *statusp) retorna o pid do filho terminado.
+      (sys/types.h e sys/wait.h). O comportamento padrão é suspender o processo até que um filho termine e só para término de processo. 
+
+    Para ambas, errno é atualizado com ECHILD quando o processo chamado não tem filhos. errno é EINTR quando a função waitpid é interrompida por um sinal.
+
+    • unsigned int sleep(unsigned int secs) suspende um processo por secs segundos. Retorna a quantidade de tempo que falta na espera.
+      (unistd.h)
+
+    • int pause(void) coloca o processo para dormir até que um sinal tenha sido recebido.
+      (unistd.h)
+
+    • int execve(const char *filename, const char *argv[], const char *envp[]) carrega e roda um programa. Só retorna se houve problemas ao executar o programa.
+
+
+Sinais
+
+    • pid_t getpgrp(void) retorna o ID do grupo de processo a qual o processo que chamou a função pertence.
+    (unistd.h)
+    • int setpgid(pid_t pid, pid_t pgid) muda o grupo de processo do processo pid para pgid. [REVER]
+    (unistd.h)
+
+    • int kill(pid_t pid, int sig) envia sinais entre processos. Se o pid do processo é precedido por -, todos os processos naquele grupo de processo recebem o sinal.
+    (sys/types.h e signal.h)
+
+    • unsigned int alarm(unsigned int secs) envia o sinal SIGALRM para si mesmo.
+
+    • sighandler_t signal(int signum, sighandler_t handler) modifica a ação padrão de um sinal. É como criamos handlers.
+    (signal.h)
+
+    • int sigprocmask(int how, const sigset_t *set, sigset_t *oldset) muda o conjunto de sinais bloqueados (blocked). O parâmetro how indica coo fazer essa modificação:
+        ⁃ SIG_BLOCK. Adiciona os sinais set a blocked.
+        ⁃ SIG_UNBLOCK. Remove os sinais set de blocked.
+        ⁃ SIG_SETMASK. Seta blocked para set.
+    O valor prévio é armazenado em oldset.
+    (signal.h)
+
+    • int sigemptyset(sigset_t *set) limpa o conjunto set.
+    • int sigfillset(sigset_t *set) seta o conjunto set.
+    • int sigaddset(sigset_t *set, int signum) adiciona signum a set.
+    • int sigdelset(sigset_t *set, int signum) retira signum de set.
+    • Signal instala um manipulador de sinais.
+    • int sigsuspend(const sigset_t *mask) substitui o conjunto de sinais bloqueados por mask e suspende o processo que a chamou até a recepção do sinal que gatilhe o handler ou termine o processo.
+
+    Preciso saber como escrever funções de acordo com a orientação de segurança.
