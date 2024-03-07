@@ -66,4 +66,12 @@ Sinais
     • Signal instala um manipulador de sinais.
     • int sigsuspend(const sigset_t *mask) substitui o conjunto de sinais bloqueados por mask e suspende o processo que a chamou até a recepção do sinal que gatilhe o handler ou termine o processo.
 
-    Preciso saber como escrever funções de acordo com a orientação de segurança.
+
+    Escrever funções de acordo com a orientação de segurança:
+
+        G0. Mantenha os handlers o mais simples possível. A melhor maneira de evitar problemas é escrever manipuladores o quanto menor e o mais simples possível.
+        G1. Somente utilizar função async-signal-safe nos manipuladores. (sio_puts e sio_putl)
+        G2. Salve e restore errno.
+        G3. Proteja acessos a estruturas globais de dados compartilhadas bloqueando todos os sinais. 
+        G4. Declarar as variáveis globais como volatile.
+        G5. Declarar flags com sig_atomic_t.
