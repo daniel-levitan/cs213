@@ -194,14 +194,11 @@ void eval(char *cmdline)
     char buf[MAXLINE];
     strcpy(buf, cmdline);
     int bg = parseline(buf, argv);
-    // int bg = parseline(cmdline, argv);
     if (argv[0] == NULL)
         return;
 
     if (!builtin_cmd(argv))
     {
-        // After this differentation, I need to call the program
-        // I need only to call the program once
         int state = FG;
         if (bg) {
             state = BG;
@@ -220,12 +217,10 @@ void eval(char *cmdline)
             Execve(argv[0], argv, NULL);
         }
 
-        // Vou tentar com sigsuspend
         pid = 0;
         while (!pid){
             Sigsuspend(&prev_one);
         }
-
         Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
         addjob(jobs, pid, state, cmdline);
 
@@ -233,7 +228,6 @@ void eval(char *cmdline)
         // addjob(jobs, pid, state, cmdline);
         // Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
     }
-
     return;
 }
 
@@ -365,8 +359,6 @@ void sigchld_handler(int sig)
     Sigfillset(&mask_all);
 
     while ((pid = waitpid(-1, &status, 0)) > 0) { /* Reap a zombie child */
-        // if (WIFEXITED(status))
-            // printf("pid %d exit status=%d\n", pid, WEXITSTATUS(status));
         Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         deletejob(jobs, pid); /* Delete the child from the job list */
         Sigprocmask(SIG_SETMASK, &prev_all, NULL);
@@ -374,8 +366,6 @@ void sigchld_handler(int sig)
     if (errno != ECHILD)
         Sio_error("waitpid error");
     errno = olderrno;
-    fflush(stdout);
-
     return;
 }
 
@@ -398,8 +388,8 @@ void sigint_handler(int sig)
 void sigtstp_handler(int sig) 
 {
     // CTRL+Z
-    // Suspender as tarefas em fg
-    // Enviar SIGTSTP para qualquer tarefa em fg.
+    // Suspend tasks in fg
+    // Send SIGTSTP to every job in fg.
     return;
 }
 
