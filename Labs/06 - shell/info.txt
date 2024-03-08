@@ -15,16 +15,24 @@ Processos
         Aqui tem uma observação sobre arquivos. Se o processo pai tiver um arquivo aberto, os descritores serão copiados, apontarão para os mesmos lugares. Leituras feitas pelo pai avançarão o ponteiro do filho. 
 
     • pid_t waitpid(pid_t pid, int *statusp, int options) retorna o pid do filho terminado. Processo pai aguarda um processo filho terminar. 
-        Se pid > 0, espera pelo processo pid.
-        Se pid = -1, espera por qualquer processo filho.
-        Podemos mudar o comportamento de waitpid através do parâmetro options:
-            ⁃ WNOHANG. Retorna imediatamente se não houver filhos terminados.
-            ⁃ WUNTRACED. Suspende o processo chamando até que um filho tenha terminado ou tenha parado.
-            ⁃ WCONTINUED. Suspende o processo chamando até que um processo tenha terminado ou um processo parado tenha sido retomado pela recepção de SIGCONT.
-        Podemos combinar as opções acima.
+
+      A função suspende a execução do processo que a chamou até que um processo filho no seu grupo de espera termine.
+
+      Se options é 0, o processo é suspenso até coletarmos o filho.
+      Se pid > 0, espera pelo processo pid.
+      Se pid = -1, espera por qualquer processo filho.
+
+      Podemos mudar o comportamento padrão através das opções.
+        WNOHANG. Retorna imediatamente com 0. Aí precisamos tratar da espera com handlers.
+        WUNTRACED. Suspende a execução até um filho terminar ou parar (STOP).
+        WCONTINUED. Suspende a execução até um filho terminar ou um processo parado retomar sua execução.
+
+      Returns: PID of child if OK, 0 (if WNOHANG), or −1 on error
+
 
     • pid_t wait(int *statusp) retorna o pid do filho terminado.
       (sys/types.h e sys/wait.h). O comportamento padrão é suspender o processo até que um filho termine e só para término de processo. 
+      Equivale a waitpid(-1, &status, 0)
 
     Para ambas, errno é atualizado com ECHILD quando o processo chamado não tem filhos. errno é EINTR quando a função waitpid é interrompida por um sinal.
 
@@ -75,3 +83,14 @@ Sinais
         G3. Proteja acessos a estruturas globais de dados compartilhadas bloqueando todos os sinais. 
         G4. Declarar as variáveis globais como volatile.
         G5. Declarar flags com sig_atomic_t.
+
+
+
+
+
+
+  Uma vez que um filho tenha sido coletado, podemos querer verificar seu estado:
+    WIFEXITED(status). Retorna verdadeiro se tudo correu bem.
+    WEXITSTATUS(status). Retorna o status de término.
+
+
