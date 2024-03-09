@@ -51,7 +51,9 @@ struct job_t {              /* The job struct */
 struct job_t jobs[MAXJOBS]; /* The job list */
 
 /* My additions to global variables */
-volatile sig_atomic_t pid;
+// volatile sig_atomic_t pid;
+volatile sig_atomic_t fg_job_pid;
+volatile sig_atomic_t command_executed;
 
 /* End global variables */
 
@@ -200,33 +202,34 @@ void eval(char *cmdline)
     if (!builtin_cmd(argv))
     {
         int state = FG;
-        if (bg) {
-            state = BG;
-        }        
-
-        // int pid;
+        if (bg) state = BG;
+        
+        pid_t child_pid;
         sigset_t mask_all, mask_one, prev_one;
-
         Sigfillset(&mask_all);
         Sigemptyset(&mask_one);
         Sigaddset(&mask_one, SIGCHLD);
-
         Sigprocmask(SIG_BLOCK, &mask_one, &prev_one); /* Block SIGCHLD */
-        if ((pid = Fork()) == 0) { /* Child process */
+
+        child_pid = Fork();
+        if (child_pid == 0) { /* Child process */
             Sigprocmask(SIG_SETMASK, &prev_one, NULL); /* Unblock SIGCHLD */
             Execve(argv[0], argv, NULL);
+        } else {
+            // should only add job if it ran. How this is happening?
+            Sigprocmask(SIG_BLOCK, &mask_all, NULL); /* Parent process */  
+            addjob(jobs, child_pid, state, cmdline);
+            // fg_job_pid = 0;
+            Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
+            
+            if (bg) {
+                // I'm not sure I am calculating jid correctly
+                printf("[%d] (%d) %s", nextjid - 1, child_pid, cmdline);                
+
+            } else 
+                waitfg(child_pid);         
         }
 
-        pid = 0;
-        while (!pid){
-            Sigsuspend(&prev_one);
-        }
-        Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
-        addjob(jobs, pid, state, cmdline);
-
-        // Sigprocmask(SIG_BLOCK, &mask_all, NULL); /* Parent process */  
-        // addjob(jobs, pid, state, cmdline);
-        // Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
     }
     return;
 }
@@ -335,6 +338,9 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    while (fg_job_pid != pid)
+        sleep(1); 
+    
     return;
 }
 
@@ -351,20 +357,18 @@ void waitfg(pid_t pid)
  */
 void sigchld_handler(int sig) 
 {
-    int olderrno = errno;
     sigset_t mask_all, prev_all;
-    // pid_t pid;
-    int status;
-
     Sigfillset(&mask_all);
+    int olderrno = errno;
 
-    while ((pid = waitpid(-1, &status, 0)) > 0) { /* Reap a zombie child */
+    pid_t child_pid;
+    
+    while ((child_pid = waitpid(-1, NULL, 0)) > 0) { /* Reap a zombie child */ 
         Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
-        deletejob(jobs, pid); /* Delete the child from the job list */
+        fg_job_pid = child_pid;
+        deletejob(jobs, child_pid); /* Delete the child from the job list */
         Sigprocmask(SIG_SETMASK, &prev_all, NULL);
     }
-    if (errno != ECHILD)
-        Sio_error("waitpid error");
     errno = olderrno;
     return;
 }
@@ -447,7 +451,7 @@ int addjob(struct job_t *jobs, pid_t pid, int state, char *cmdline)
             if(verbose){
                 printf("Added job [%d] %d %s\n", jobs[i].jid, jobs[i].pid, jobs[i].cmdline);
             }
-                return 1;
+            return 1;
         }
     }
     printf("Tried to create too many jobs\n");
@@ -655,7 +659,7 @@ pid_t Fork(void)
 void Execve(const char *filename, char *const argv[], char *const envp[]) 
 {
     if (execve(filename, argv, envp) < 0)
-    unix_error("Execve error");
+        unix_error("Execve error");
 }
 
 ssize_t Sio_putl(long v)
