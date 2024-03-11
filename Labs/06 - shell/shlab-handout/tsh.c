@@ -51,9 +51,7 @@ struct job_t {              /* The job struct */
 struct job_t jobs[MAXJOBS]; /* The job list */
 
 /* My additions to global variables */
-// volatile sig_atomic_t pid;
-volatile sig_atomic_t fg_job_pid;
-volatile sig_atomic_t command_executed;
+// volatile sig_atomic_t command_executed;
 
 /* End global variables */
 
@@ -99,17 +97,13 @@ void Sigemptyset(sigset_t *set);
 void Sigaddset(sigset_t *set, int signum);
 void Sigprocmask(int how, const sigset_t *set, sigset_t *oldset);
 pid_t Fork(void);
-void Execve(const char *filename, char *const argv[], char *const envp[]);
-void Sio_error(char s[]);
-ssize_t sio_puts(char s[]);
-ssize_t sio_putl(long v);
-void sio_error(char s[]);
-static size_t sio_strlen(char s[]);
-static void sio_ltoa(long v, char s[], int b);
-static void sio_reverse(char s[]);
-ssize_t Sio_putl(long v);
-ssize_t Sio_puts(char s[]);
 int Sigsuspend(const sigset_t *set);
+
+/***************************************************
+ * My helpers functions
+ ***************************************************/
+int get_argv_len(char **argv);
+int digits_only(const char *s);
 
 
 /*
@@ -196,16 +190,16 @@ void eval(char *cmdline)
     char buf[MAXLINE];
     strcpy(buf, cmdline);
     int bg = parseline(buf, argv);
-    if (argv[0] == NULL)
-        return;
+    if (argv[0] == NULL) return;
 
     if (!builtin_cmd(argv))
     {
+        pid_t child_pid;
+        sigset_t mask_all, mask_one, prev_one;
+        
         int state = FG;
         if (bg) state = BG;
         
-        pid_t child_pid;
-        sigset_t mask_all, mask_one, prev_one;
         Sigfillset(&mask_all);
         Sigemptyset(&mask_one);
         Sigaddset(&mask_one, SIGCHLD);
@@ -214,18 +208,19 @@ void eval(char *cmdline)
         child_pid = Fork();
         if (child_pid == 0) { /* Child process */
             Sigprocmask(SIG_SETMASK, &prev_one, NULL); /* Unblock SIGCHLD */
-            Execve(argv[0], argv, NULL);
+            setpgid(0, 0);
+            if (execve(argv[0], argv, NULL) < 0) {
+                printf("%s: Command not found\n", argv[0]);
+                exit(1);
+            }
         } else {
             // should only add job if it ran. How this is happening?
             Sigprocmask(SIG_BLOCK, &mask_all, NULL); /* Parent process */  
             addjob(jobs, child_pid, state, cmdline);
-            // fg_job_pid = 0;
             Sigprocmask(SIG_SETMASK, &prev_one, NULL);  /* Unblock SIGCHLD */
             
             if (bg) {
-                // I'm not sure I am calculating jid correctly
-                printf("[%d] (%d) %s", nextjid - 1, child_pid, cmdline);                
-
+                printf("[%d] (%d) %s", pid2jid(child_pid), child_pid, cmdline);                
             } else 
                 waitfg(child_pid);         
         }
@@ -308,12 +303,7 @@ int builtin_cmd(char **argv)
         listjobs(jobs);
         return 1;
     }
-    else if (strcmp(argv[0], "bg") == 0)
-    {
-        do_bgfg(argv);
-        return 1;
-    }
-    else if (strcmp(argv[0], "fg") == 0)
+    else if (strcmp(argv[0], "bg") == 0 || strcmp(argv[0], "fg") == 0)
     {
         do_bgfg(argv);
         return 1;
@@ -326,10 +316,82 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
-    if (strcmp(argv[0], "bg") == 0)
-        Sio_puts("BG\n");
-    else
-        Sio_puts("FG\n");
+    // The conversion between jid and pid should be a function
+    // Get stopped job should also be a function
+
+    pid_t pid;
+    struct job_t *stopped_job;
+    int jid;
+
+    if (get_argv_len(argv) != 2) {
+        if (strcmp(argv[0], "bg") == 0) 
+            printf("bg command requires PID or %%jobid argument\n");
+        else
+            printf("fg command requires PID or %%jobid argument\n");
+        return;
+    }
+
+    // Get stipped job
+    if (argv[1][0] == '%') {        
+        char *jid_str = (char *) malloc(sizeof(argv[1]) - 1);
+        if (jid_str == NULL) {
+            printf("Error allocating memory.\n");
+            exit(0); // Maybe end with failure
+        }
+
+        int j = 0;
+        for (int i = 1; i < sizeof(argv[1]) - 1; i++) {
+            jid_str[j] = argv[1][i];
+            j++;
+        }
+
+        if (!digits_only(jid_str)) {
+            if (strcmp(argv[0], "bg") == 0)
+                printf("bg: argument must be a PID or %%jobid\n");
+            else
+                printf("fg: argument must be a PID or %%jobid\n");
+            return;
+        }
+
+        jid = atoi(jid_str);
+        stopped_job = getjobjid(jobs, jid);        
+        free(jid_str);
+
+        if (stopped_job == NULL) {
+            printf("%%%d: No such job\n", jid);
+            return;
+        }
+        pid = stopped_job->pid;
+    }
+    else {
+
+        if (!digits_only(argv[1])) {
+            if (strcmp(argv[0], "bg") == 0)
+                printf("bg: argument must be a PID or %%jobid\n");
+            else
+                printf("fg: argument must be a PID or %%jobid\n");
+            return;
+        }
+
+        pid  = atoi(argv[1]);
+        stopped_job = getjobpid(jobs, pid);
+        if (stopped_job == NULL) {
+            printf("%%%d: No such job\n", pid);
+            return;
+        }
+    }
+
+    kill(-pid, SIGCONT);
+
+    // Somehow I need to be able to send the job to fg or bg
+    if (strcmp(argv[0], "bg") == 0) {
+        stopped_job->state = BG;
+        printf("[%d] (%d) %s", pid2jid(stopped_job->pid), stopped_job->pid, stopped_job->cmdline);
+    }
+    else {
+        stopped_job->state = FG;
+        waitfg(pid);
+    }
     return;
 }
 
@@ -338,7 +400,7 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-    while (fg_job_pid != pid)
+    while (fgpid(jobs))
         sleep(1); 
     
     return;
@@ -361,14 +423,28 @@ void sigchld_handler(int sig)
     Sigfillset(&mask_all);
     int olderrno = errno;
 
+    // The handout recommends wiating for only one child. What happens if
+    // two processes terminate very close to each other, will I reap both?
+    // Should I wait for a process by the number?
     pid_t child_pid;
+    int status;
+
+    child_pid = waitpid(-1, &status, WNOHANG | WUNTRACED);
     
-    while ((child_pid = waitpid(-1, NULL, 0)) > 0) { /* Reap a zombie child */ 
+    if ((WIFEXITED(status) && !WEXITSTATUS(status)) || WIFSIGNALED(status)) {
         Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
-        fg_job_pid = child_pid;
         deletejob(jobs, child_pid); /* Delete the child from the job list */
         Sigprocmask(SIG_SETMASK, &prev_all, NULL);
     }
+
+    // Child did not find the command, delete the job that was added
+    // Since the parent will always run, I will always have the job added
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+        Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+        deletejob(jobs, child_pid); /* Delete the child from the job list */
+        Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+    }
+
     errno = olderrno;
     return;
 }
@@ -380,7 +456,19 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
-    exit(0);
+    pid_t fg_job_pid = fgpid(jobs);
+    if (fg_job_pid == 0) return;
+    
+    kill(-fg_job_pid, SIGINT);
+
+    struct job_t *killed_job = getjobpid(jobs, fg_job_pid);
+    if (killed_job == NULL) {
+        printf("Error: Job %d not found.\n", fg_job_pid);
+        return;
+    }
+    
+    printf("Job [%d] (%d) terminated by signal 2\n", pid2jid(fg_job_pid), fg_job_pid);
+    deletejob(jobs, fg_job_pid);
     return;
 }
 
@@ -391,9 +479,20 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
-    // CTRL+Z
-    // Suspend tasks in fg
-    // Send SIGTSTP to every job in fg.
+    pid_t fg_job_pid = fgpid(jobs);
+    if (fg_job_pid == 0) return;
+
+    // I'm only stopping the fg process. What about the children?
+    // Shouldn't I use -pid?
+    kill(-fg_job_pid, SIGTSTP);
+
+    struct job_t *stopped_job = getjobpid(jobs, fg_job_pid);
+    if (stopped_job == NULL) {
+        printf("Error: Job %d not found.\n", fg_job_pid);
+        return;
+    }
+    stopped_job->state = ST;
+    printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(fg_job_pid), fg_job_pid, SIGTSTP);
     return;
 }
 
@@ -656,92 +755,6 @@ pid_t Fork(void)
     return pid;
 }
 
-void Execve(const char *filename, char *const argv[], char *const envp[]) 
-{
-    if (execve(filename, argv, envp) < 0)
-        unix_error("Execve error");
-}
-
-ssize_t Sio_putl(long v)
-{
-    ssize_t n;
-  
-    if ((n = sio_putl(v)) < 0)
-    sio_error("Sio_putl error");
-    return n;
-}
-
-ssize_t Sio_puts(char s[])
-{
-    ssize_t n;
-  
-    if ((n = sio_puts(s)) < 0)
-    sio_error("Sio_puts error");
-    return n;
-}
-
-void Sio_error(char s[])
-{
-    sio_error(s);
-}
-
-ssize_t sio_puts(char s[]) /* Put string */
-{
-    return write(STDOUT_FILENO, s, sio_strlen(s));
-}
-
-ssize_t sio_putl(long v) /* Put long */
-{
-    char s[128];
-    
-    sio_ltoa(v, s, 10); /* Based on K&R itoa() */ 
-    return sio_puts(s);
-}
-
-void sio_error(char s[]) /* Put error message and exit */
-{
-    sio_puts(s);
-    _exit(1);                                      
-}
-
-static size_t sio_strlen(char s[])
-{
-    int i = 0;
-
-    while (s[i] != '\0')
-        ++i;
-    return i;
-}
-
-static void sio_ltoa(long v, char s[], int b) 
-{
-    int c, i = 0;
-    int neg = v < 0;
-
-    if (neg)
-    v = -v;
-
-    do {  
-        s[i++] = ((c = (v % b)) < 10)  ?  c + '0' : c - 10 + 'a';
-    } while ((v /= b) > 0);
-
-    if (neg)
-    s[i++] = '-';
-
-    s[i] = '\0';
-    sio_reverse(s);
-}
-
-static void sio_reverse(char s[])
-{
-    int c, i, j;
-
-    for (i = 0, j = strlen(s)-1; i < j; i++, j--) {
-        c = s[i];
-        s[i] = s[j];
-        s[j] = c;
-    }
-}
 
 int Sigsuspend(const sigset_t *set)
 {
@@ -749,4 +762,21 @@ int Sigsuspend(const sigset_t *set)
     if (errno != EINTR)
         unix_error("Sigsuspend error");
     return rc;
+}
+
+/***************************************************
+ * My helper functions
+ ***************************************************/
+int get_argv_len(char **argv) {
+    int len = 0;
+    while (argv[len] != NULL) 
+        len++;
+    return len;
+}
+
+int digits_only(const char *s) {
+    while(*s) {
+        if (isdigit(*s++) == 0) return 0;
+    }
+    return 1;
 }
