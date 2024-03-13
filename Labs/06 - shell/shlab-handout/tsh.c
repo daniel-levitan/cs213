@@ -247,25 +247,10 @@ int parseline(const char *cmdline, char **argv)
     strcpy(buf, cmdline);
     buf[strlen(buf)-1] = ' ';  /* replace trailing '\n' with space */
     while (*buf && (*buf == ' ')) /* ignore leading spaces */
-    buf++;
+        buf++;
 
     /* Build the argv list */
     argc = 0;
-    if (*buf == '\'') {
-    buf++;
-    delim = strchr(buf, '\'');
-    }
-    else {
-    delim = strchr(buf, ' ');
-    }
-
-    while (delim) {
-    argv[argc++] = buf;
-    *delim = '\0';
-    buf = delim + 1;
-    while (*buf && (*buf == ' ')) /* ignore spaces */
-           buf++;
-
     if (*buf == '\'') {
         buf++;
         delim = strchr(buf, '\'');
@@ -273,15 +258,30 @@ int parseline(const char *cmdline, char **argv)
     else {
         delim = strchr(buf, ' ');
     }
+
+    while (delim) {
+        argv[argc++] = buf;
+        *delim = '\0';
+        buf = delim + 1;
+        while (*buf && (*buf == ' ')) /* ignore spaces */
+           buf++;
+
+        if (*buf == '\'') {
+            buf++;
+            delim = strchr(buf, '\'');
+        }
+        else {
+            delim = strchr(buf, ' ');
+        }
     }
     argv[argc] = NULL;
     
     if (argc == 0)  /* ignore blank line */
-    return 1;
+        return 1;
 
     /* should the job run in the background? */
     if ((bg = (*argv[argc-1] == '&')) != 0) {
-    argv[--argc] = NULL;
+        argv[--argc] = NULL;
     }
     return bg;
 }
@@ -318,80 +318,62 @@ void do_bgfg(char **argv)
 {
     // The conversion between jid and pid should be a function
     // Get stopped job should also be a function
-
     pid_t pid;
     struct job_t *stopped_job;
     int jid;
+    char command[MAXLINE], argument[MAXLINE];
+    char is_jid = 0;
+    
 
+    strcpy(command, argv[0]);
     if (get_argv_len(argv) != 2) {
-        if (strcmp(argv[0], "bg") == 0) 
-            printf("bg command requires PID or %%jobid argument\n");
-        else
-            printf("fg command requires PID or %%jobid argument\n");
+        printf("%s command requires PID or %%jobid argument\n", command);
         return;
     }
 
-    // Get stipped job
-    if (argv[1][0] == '%') {        
-        char *jid_str = (char *) malloc(sizeof(argv[1]) - 1);
-        if (jid_str == NULL) {
-            printf("Error allocating memory.\n");
-            exit(0); // Maybe end with failure
-        }
+    strcpy(argument, argv[1]);
+    is_jid = (argument[0] == '%');
 
-        int j = 0;
-        for (int i = 1; i < sizeof(argv[1]) - 1; i++) {
-            jid_str[j] = argv[1][i];
-            j++;
-        }
-
-        if (!digits_only(jid_str)) {
-            if (strcmp(argv[0], "bg") == 0)
-                printf("bg: argument must be a PID or %%jobid\n");
-            else
-                printf("fg: argument must be a PID or %%jobid\n");
+    if (is_jid) {
+        if (!digits_only(&argument[1])) {
+            printf("%s: argument must be a PID or %%jobid\n", command);
             return;
         }
-
-        jid = atoi(jid_str);
-        stopped_job = getjobjid(jobs, jid);        
-        free(jid_str);
-
-        if (stopped_job == NULL) {
-            printf("%%%d: No such job\n", jid);
-            return;
-        }
-        pid = stopped_job->pid;
+        jid = atoi(&argument[1]);        
+        snprintf(argument, MAXLINE, "%d", jid);
     }
     else {
-
-        if (!digits_only(argv[1])) {
-            if (strcmp(argv[0], "bg") == 0)
-                printf("bg: argument must be a PID or %%jobid\n");
-            else
-                printf("fg: argument must be a PID or %%jobid\n");
+        if (!digits_only(argument)) {
+            printf("%s: argument must be a PID or %%jobid\n", command);
             return;
         }
+        jid  = pid2jid(atoi(argument));        
+    }
+    
 
-        pid  = atoi(argv[1]);
-        stopped_job = getjobpid(jobs, pid);
-        if (stopped_job == NULL) {
-            printf("%%%d: No such job\n", pid);
-            return;
+    stopped_job = getjobjid(jobs, jid);
+    if (stopped_job == NULL) {
+        printf("%%%d: No such job\n", jid);
+        return;
+    }
+
+    pid = stopped_job->pid;
+    if (stopped_job->state == ST) {
+        kill(-pid, SIGCONT);
+
+        // Somehow I need to be able to send the job to fg or bg
+        if (strcmp(argv[0], "bg") == 0) {
+            stopped_job->state = BG;
+            printf("[%d] (%d) %s", pid2jid(stopped_job->pid), stopped_job->pid, stopped_job->cmdline);
         }
+        else {
+            stopped_job->state = FG;
+            waitfg(pid);
+        }
+    } else {
+        printf("Cannot restart a running job.\n");
     }
-
-    kill(-pid, SIGCONT);
-
-    // Somehow I need to be able to send the job to fg or bg
-    if (strcmp(argv[0], "bg") == 0) {
-        stopped_job->state = BG;
-        printf("[%d] (%d) %s", pid2jid(stopped_job->pid), stopped_job->pid, stopped_job->cmdline);
-    }
-    else {
-        stopped_job->state = FG;
-        waitfg(pid);
-    }
+    
     return;
 }
 
@@ -400,8 +382,14 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
-    while (fgpid(jobs))
-        sleep(1); 
+    sigset_t mask, prev;
+    Sigemptyset(&mask);
+    Sigprocmask(SIG_BLOCK, &mask, &prev);
+    
+    // while (fgpid(jobs) == pid) // or
+    while (fgpid(jobs)) 
+        Sigsuspend(&prev);
+        // sleep(1); 
     
     return;
 }
@@ -423,28 +411,53 @@ void sigchld_handler(int sig)
     Sigfillset(&mask_all);
     int olderrno = errno;
 
-    // The handout recommends wiating for only one child. What happens if
+    // The handout recommends waiting for only one child. What happens if
     // two processes terminate very close to each other, will I reap both?
     // Should I wait for a process by the number?
     pid_t child_pid;
     int status;
 
-    child_pid = waitpid(-1, &status, WNOHANG | WUNTRACED);
+    // The handout explicitly says that we should only make one
+    // call to waitpid. But, according to the lecture, we should
+    // use a loop, since the signal may be sent more than once.
+    while ((child_pid = waitpid(-1, &status, WNOHANG | WUNTRACED)) > 0) {
+        // if ((WIFEXITED(status) && !WEXITSTATUS(status)) || WIFSIGNALED(status)) {
+        if ((WIFEXITED(status) && !WEXITSTATUS(status))) {
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+            deletejob(jobs, child_pid); /* Delete the child from the job list */
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        }
+
+        // Child did not find the command, delete the job that was added
+        // Since the parent will always run, I will always have the job added
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+            deletejob(jobs, child_pid); /* Delete the child from the job list */
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        }    
+
+        // Deals with jobs that were interrupted by signal SIGINT
+        if (WIFSIGNALED(status)) {
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+            int job_deleted = deletejob(jobs, child_pid); /* Delete the child from the job list */
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);
+            if (job_deleted) 
+                printf("Job [%d] (%d) terminated by signal %d\n", pid2jid(child_pid), child_pid, WTERMSIG(status));            
+        }
+
+        // Deals with jobs that were stopped by signal SISGTSTP
+        if (WIFSTOPPED(status)) {
+            Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+            struct job_t *stopped_job = getjobpid(jobs, child_pid);
+            if (stopped_job) {
+                stopped_job->state = ST;    
+                printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(child_pid), child_pid, SIGTSTP); 
+            }            
+            Sigprocmask(SIG_SETMASK, &prev_all, NULL);                
+        }
+
+    }
     
-    if ((WIFEXITED(status) && !WEXITSTATUS(status)) || WIFSIGNALED(status)) {
-        Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
-        deletejob(jobs, child_pid); /* Delete the child from the job list */
-        Sigprocmask(SIG_SETMASK, &prev_all, NULL);
-    }
-
-    // Child did not find the command, delete the job that was added
-    // Since the parent will always run, I will always have the job added
-    if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
-        Sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
-        deletejob(jobs, child_pid); /* Delete the child from the job list */
-        Sigprocmask(SIG_SETMASK, &prev_all, NULL);
-    }
-
     errno = olderrno;
     return;
 }
@@ -457,18 +470,21 @@ void sigchld_handler(int sig)
 void sigint_handler(int sig) 
 {
     pid_t fg_job_pid = fgpid(jobs);
-    if (fg_job_pid == 0) return;
+    if (fg_job_pid)
+        kill(-fg_job_pid, SIGINT); 
+        
+    return;   
     
-    kill(-fg_job_pid, SIGINT);
 
-    struct job_t *killed_job = getjobpid(jobs, fg_job_pid);
-    if (killed_job == NULL) {
-        printf("Error: Job %d not found.\n", fg_job_pid);
-        return;
-    }
-    
-    printf("Job [%d] (%d) terminated by signal 2\n", pid2jid(fg_job_pid), fg_job_pid);
-    deletejob(jobs, fg_job_pid);
+    // I can either delete job here or do it centralized in the child handler
+    // struct job_t *killed_job = getjobpid(jobs, fg_job_pid);
+    // if (killed_job == NULL) {
+    //     printf("Error: Job %d not found.\n", fg_job_pid);
+    //     return;
+    // }
+    // printf("Job [%d] (%d) terminated by signal 2\n", pid2jid(fg_job_pid), fg_job_pid);
+    // deletejob(jobs, fg_job_pid);
+
     return;
 }
 
@@ -480,19 +496,11 @@ void sigint_handler(int sig)
 void sigtstp_handler(int sig) 
 {
     pid_t fg_job_pid = fgpid(jobs);
-    if (fg_job_pid == 0) return;
-
-    // I'm only stopping the fg process. What about the children?
-    // Shouldn't I use -pid?
-    kill(-fg_job_pid, SIGTSTP);
-
-    struct job_t *stopped_job = getjobpid(jobs, fg_job_pid);
-    if (stopped_job == NULL) {
-        printf("Error: Job %d not found.\n", fg_job_pid);
-        return;
-    }
-    stopped_job->state = ST;
-    printf("Job [%d] (%d) stopped by signal %d\n", pid2jid(fg_job_pid), fg_job_pid, SIGTSTP);
+    if (fg_job_pid)
+        kill(-fg_job_pid, SIGTSTP);    
+    
+    // The same comment for sigint_handler is valid here. I could've
+    // treated the signal here, instead of treating at sigchld_hanlder
     return;
 }
 
@@ -563,7 +571,7 @@ int deletejob(struct job_t *jobs, pid_t pid)
     int i;
 
     if (pid < 1)
-    return 0;
+        return 0;
 
     for (i = 0; i < MAXJOBS; i++) {
         if (jobs[i].pid == pid) {
