@@ -474,9 +474,12 @@ void sigint_handler(int sig)
         kill(-fg_job_pid, SIGINT); 
         
     return;   
-    
 
     // I can either delete job here or do it centralized in the child handler
+    // This doesn't actually work. I need to handle the signal that a process
+    // sends to itself at the child handler. This handler does not catch such
+    // signals.
+
     // struct job_t *killed_job = getjobpid(jobs, fg_job_pid);
     // if (killed_job == NULL) {
     //     printf("Error: Job %d not found.\n", fg_job_pid);
@@ -499,8 +502,7 @@ void sigtstp_handler(int sig)
     if (fg_job_pid)
         kill(-fg_job_pid, SIGTSTP);    
     
-    // The same comment for sigint_handler is valid here. I could've
-    // treated the signal here, instead of treating at sigchld_hanlder
+    // The same comment for sigint_handler is valid here. 
     return;
 }
 
