@@ -1,0 +1,9 @@
+Since I am using my M1 Mac, I was not able to test using tools other than btest. 
+
+After solving all, try to compile on Ubuntu.
+
+
+Pendentes:
+	LessThanOrEqual
+	How Many Bits
+	Floating points (3)
