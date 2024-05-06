@@ -1,0 +1,101 @@
+For the 1st bomb:
+
+    1. Added a break to explode_bomb and phase_1
+    2. I stepped into each instruction.
+    3. Did not stepped into string_length
+    4. Noticed a compare instruction comparing my entry with another string.
+    5. Inspected the other string with x /s REGISTER
+    6. Discovered the following sentence:
+
+    Answer: "Border relations with Canada have never been better."
+
+For the 2nd bomb:
+    1. Added a break to phase_2
+    2.  A function called red six numbers is called
+    3. I noticed that %rax stored the word I've entered (in main+179)
+    
+    Answer: 1 2 4 8 16 32
+      
+    (Eu vi que ele estava sempre dobrando na primeira linha, por isso usei esse valor.)
+
+For the 3rd bomb:
+    1. I need to provide two ints.
+    The first int cannot be bigger than 7
+    Answer: 0 & 207
+            1 & 311
+            2 & 707
+            3 & 256
+            4 & 389
+            5 & 206
+            6 & 682
+            7 & 327
+
+For the 4th bomb:
+    1. I need again to provide two ints.
+    The first number should be less than 15, the second 0.
+    Answer: 1 & 0
+            3 & 0
+            7 & 0
+
+For the 5th bomb:
+    1. I need a string of length 6.
+
+    Original: abcdef ghijkl mnopqr
+    Modified: aduier snfotv bylmad
+      
+    Goal word:
+         ionefg
+      -> flyers
+      
+    Answer: ionefg
+
+For the 6th bomb:
+    1. I need 6 numbers.
+    2. Numbers cannot be greater than 6.
+    3. Numbers cannot be equal.
+    4. Using ptype node I was able to peek the node_t struct!
+    (https://stackoverflow.com/questions/1768620/how-do-i-show-what-fields-a-struct-has-in-gdb)
+            
+    >> ptype struct node_t
+    type = struct node_t {
+          const void *key;
+          uintptr_t left_node;
+          uintptr_t right_node;
+    }
+
+    >> ptype /o struct node_t
+    /* offset   |   size */ type = struct node_t {
+    /*      0   |      8 */   const void *key;
+    /*      8   |      8 */   uintptr_t left_node;
+    /*     16   |      8 */   uintptr_t right_node;
+
+                                                   /* total size (bytes):   24 */
+                                                  }
+
+    print ((MY_STRUCT *)variable)
+    print ((MY_STRUCT *)variable->my_structure_elem
+    print (struct node_t) node1
+
+    5. To print each element
+          print /x ((struct node_t) node1).left_node
+
+    It seems to be a linked list. But, there are some checkings going on.
+
+    The only thing that helped me was to print a register using x/3x
+
+
+    Summary: What we have here is a list of nodes. At thee beginning the numbers are checked so all of them are numbered from 1 to 6, no repetition.
+
+    The numbers are rearranged by decreasing it from 7. So the order get shifted.
+
+    Then we see that there is a struct which points to a next element. The struct has a name that is no what you'd expected. I had problems to get the values within the struct.
+
+    The only thing that helped me was to use x/3x $edx to analyze the 3 bytes that composed the struct. That only worked when peeking to the values when they were stored at a register.
+
+    I was not able to print it from the struct.
+
+    Then I saw that there were some values inside the nodes from 1 to 6, the numbers were: 0x14c (332), 0xa8 (168), 0x39c (924), 0x2b3 (691), 0x1dd (477), and 0x1bb (443).
+
+    The request was to have the numbers in decreasing order, but recalling that they were discounted from 7. So, we would have 3 4 5 6 1 2, but decreasing ffrom 7: 4 3 2 1 6 5
+
+    Answer: 4 3 2 1 6 5

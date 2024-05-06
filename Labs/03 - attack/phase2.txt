@@ -1,0 +1,49 @@
+https://stackoverflow.com/questions/21919819/bomblab-phase-6-reading-assembly-code
+
+
+Hi,
+
+I'm reading the book Computer Science a Programmer's Perspective and following along the online course and labs (https://csapp.cs.cmu.edu/3e/labs.html).
+
+The Attack Lab asks us to provide input strings that may exploit code to force it to behave in a different manner that it was intended to run.
+
+In the second phase we are requested to provide a string that could make a function run with an argument. In phase 1 we had previously provided a string to call a function with no arguments.
+
+The rationale is to overload the parameters, knowing that the parameters are provided via registers in a specific order. So, the overall idea is to overload register %rdi with the cookie provided. In this version, the cookie value is 0x59b997fa.
+
+So my initial idea was to overload the register %rdi with a mov instruction, get the byte code for it, place it in a file and then fill up the file with 00 (0 in hex) until reaching the size of the buffer reserved for the input string and then place the value of the touch2 function, which is the function we were asked to touch in this phase.
+
+The file would be, in hex:
+48 c7 c7 fa 97 b9 59      /* mov 0x59b997fa, %rdi */
+00
+00 00 00 00 00 00 00 00   
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00   /* padding with zeroes */
+ec 17 40 00 00 00 00 00   /* touch2 address  */
+
+This calls touch2 with the wrong argument (0x71679a80), so rdi is being overriden after I insert a value. This probably happens withing Gets.
+
+Then I thought about pushing the address of the instruction right after the Gets instruction within getbuf and add a ret instruction. This way getbuf would resume execution with the new value of rdi. After finishing it, the ret instruction of getbuf would call the address of touch2 at the end of my file.
+
+The file would be, in hex:
+68 78 dc 61 55            /* pushq 0x5561dc78  Push address after Gets */
+48 c7 c7 fa 97 b9 59      /* mov $0x59b997fa, %rdi */
+c3                        /* ret */
+00 00 00                  /* padding for the first 3 instructions */
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00 00   /* Padding to sum up 40 bytes, 0x28 */
+ec 17 40 00 00 00 00 00   /* target2 address */
+
+This lead to another error. Misfire, with wrong argument (0x329b1a80)
+
+The string only worked when I placed the return address to be that of target2. Meaning that I push target2's address to the stack, I mov my cookie to register %rdi and then return the call. This immediately calls target2 with the correct parameter.
+
+Then, at the end, I must place the stack to the value of the instruction right after the Gets call, otherwise I get an illegal instruction error.
+
+I have two questions:
+
+1. Why do I need to call touch2 right after moving my cookie to %rdi? Is this because %rdi may be changed until the ret function (the one from getbuf) gets called?
+
+2. Why do I need to place the address from the instruction after the call to Gets at the end of the file? Is it for the value Gets will use to resume execution?
